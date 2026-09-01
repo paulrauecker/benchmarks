@@ -1,0 +1,58 @@
+# Benchmark suites. `limit`/`epochs` here are defaults; CLI flags override.
+#
+# Cost figures are per model on a mid-tier NON-REASONING model. A model emitting
+# ~8k thinking tokens per sample costs roughly 10-20x these numbers, and the
+# `math` suite is where that concentrates.
+
+suites:
+  # Config validation, not measurement. Proves endpoint/auth/template/sandbox
+  # work before you spend real money. Run this against every new model first.
+  smoke:
+    description: "Config validation, ~$0.05/model, <2 min"
+    limit: 20
+    tasks: [ifeval, gpqa_diamond, humaneval]
+
+  core:
+    description: "Cheap high-signal screen, ~$1/model, ~15 min"
+    tasks:
+      - ifeval                        # 541, programmatic scoring, no judge
+      - gpqa_diamond                  # 198, graduate physics/chem/bio
+      - {task: mmlu_pro, limit: 1000} # subsampled from 12k
+
+  math:
+    description: "~$1/model non-reasoning, $20+ on reasoning models"
+    tasks:
+      - math                          # MATH-500
+      # 30 items/year: one problem is 3.3pp, so epochs are mandatory
+      - {task: aime2025, epochs: 4}
+
+  code:
+    description: "~$1/model, requires Docker"
+    tasks: [humaneval, mbpp]
+
+  custom:
+    description: "Your workflows. The uncontaminated signal."
+    tasks: [extraction, physics_qa, code_tasks, agentic]
+
+  all:
+    description: "Everything"
+    includes: [core, math, code, custom]
+
+# Maps suite task names to their inspect_evals import paths. Custom tasks
+# resolve to llm_bench.tasks instead.
+# Values are inspect_ai's REGISTERED task names (package/task_fn, via the
+# @task decorator's registry_info().name) -- NOT python module import paths.
+# Confirmed against installed inspect_evals: registry_info(ifeval).name ==
+# "inspect_evals/ifeval", etc.
+registry:
+  ifeval:       inspect_evals/ifeval
+  gpqa_diamond: inspect_evals/gpqa_diamond
+  mmlu_pro:     inspect_evals/mmlu_pro
+  math:         inspect_evals/math
+  aime2025:     inspect_evals/aime2025
+  humaneval:    inspect_evals/humaneval
+  mbpp:         inspect_evals/mbpp
+  extraction:   llm_bench/extraction
+  physics_qa:   llm_bench/physics_qa
+  code_tasks:   llm_bench/code_tasks
+  agentic:      llm_bench/agentic

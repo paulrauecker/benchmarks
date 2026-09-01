@@ -1,0 +1,1 @@
+{"id": "t1", "input": "Invoice from Acme Corp, total due: $1234.56", "schema": {"vendor": "string", "total": "number"}, "target": {"vendor": "Acme Corp", "total": 1234.56}}
