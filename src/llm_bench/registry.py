@@ -102,6 +102,7 @@ class TaskSpec:
 class Registry:
     models: dict[str, Model]
     judge: str
+    judge_cost: dict[str, float] | None
     suites: dict[str, dict[str, Any]]
     task_paths: dict[str, str]
     _suite_defaults: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -135,6 +136,7 @@ class Registry:
         return cls(
             models=models,
             judge=models_raw.get("judge", ""),
+            judge_cost=models_raw.get("judge_cost"),
             suites=suites_raw.get("suites", {}),
             task_paths=suites_raw.get("registry", {}),
         )
@@ -200,7 +202,7 @@ class Registry:
             return None
         return Model(
             name="judge", spec=self.judge, temperature=0.0, max_tokens=4096,
-            max_connections=4, logprobs=False,
+            max_connections=4, logprobs=False, cost=self.judge_cost,
         )
 
     def judge_available(self) -> bool:

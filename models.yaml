@@ -11,6 +11,7 @@ defaults:
 # Pinned judge for model-graded scoring. One judge for all runs keeps the
 # self-preference bias constant; the harness refuses to let a model judge itself.
 judge: openrouter/anthropic/claude-sonnet-4.5
+judge_cost: {input: 3.00, output: 15.00}  # USD per 1M tokens, Anthropic list price
 
 models:
   qwen3-32b-vllm:
@@ -53,3 +54,17 @@ models:
     cost: {input: 0.25, output: 2.00}
     max_tokens: 16384                 # reasoning models need headroom
     max_connections: 8
+
+  nemotron-3-super-free:
+    spec: openrouter/nvidia/nemotron-3-super-120b-a12b:free
+    cost: {input: 0.0, output: 0.0}    # :free tier
+    max_tokens: 16384                  # reasoning model (medium effort by default)
+    max_connections: 2                 # free-tier endpoints rate-limit hard
+    logprobs: false                    # :free variant's supported_parameters omits logprobs
+
+  minimax-m3-free:
+    spec: openrouter/minimax/minimax-m3:free
+    cost: {input: 0.0, output: 0.0}   # :free tier
+    max_tokens: 16384                 # reasoning model, needs headroom
+    max_connections: 2                # free-tier endpoints rate-limit hard
+    logprobs: false

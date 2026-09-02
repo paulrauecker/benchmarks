@@ -22,7 +22,10 @@ suites:
   math:
     description: "~$1/model non-reasoning, $20+ on reasoning models"
     tasks:
-      - math                          # MATH-500
+      # inspect_evals' math task has no built-in cap -- its dataset is the
+      # full 5,000-sample MATH test split, not MATH-500. Cap explicitly or
+      # this task alone can run 24+ hours on a slow backend.
+      - {task: math, limit: 500}
       # 30 items/year: one problem is 3.3pp, so epochs are mandatory
       - {task: aime2025, epochs: 4}
 
@@ -33,6 +36,10 @@ suites:
   custom:
     description: "Your workflows. The uncontaminated signal."
     tasks: [extraction, physics_qa, code_tasks, agentic]
+
+  core_math:
+    description: "core + math only, no code/custom"
+    includes: [core, math]
 
   all:
     description: "Everything"

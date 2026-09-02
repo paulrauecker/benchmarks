@@ -23,11 +23,26 @@ def _add_report(sub: argparse._SubParsersAction) -> None:
     p.add_argument("log_dir", type=Path)
 
 
+def _add_dashboard(sub: argparse._SubParsersAction) -> None:
+    p = sub.add_parser("dashboard", help="render a log directory as an interactive HTML dashboard")
+    p.add_argument("log_dir", type=Path)
+    p.add_argument("--output", type=Path, default=None, help="default: <log_dir>/dashboard.html")
+    p.add_argument("--no-open", action="store_true", help="write the file but don't open a browser")
+
+
 def _add_profile(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser("profile", help="latency @ concurrency=1 and a throughput sweep")
     p.add_argument("--models", required=True, help="comma-separated model names")
     p.add_argument("--concurrencies", default="1,2,4,8,16")
     p.add_argument("--samples-per-level", type=int, default=4)
+
+
+def _add_resume(sub: argparse._SubParsersAction) -> None:
+    p = sub.add_parser(
+        "resume",
+        help="resume incomplete/errored runs in a log dir (e.g. after a connectivity drop)",
+    )
+    p.add_argument("log_dir", type=Path)
 
 
 def _add_list(sub: argparse._SubParsersAction) -> None:
@@ -40,7 +55,9 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     _add_run(sub)
     _add_report(sub)
+    _add_dashboard(sub)
     _add_profile(sub)
+    _add_resume(sub)
     _add_list(sub)
 
     args = parser.parse_args(argv)
@@ -65,6 +82,12 @@ def main(argv: list[str] | None = None) -> int:
         report(args.log_dir)
         return 0
 
+    if args.command == "dashboard":
+        from llm_bench.dashboard import dashboard
+
+        dashboard(args.log_dir, output=args.output, open_browser=not args.no_open)
+        return 0
+
     if args.command == "profile":
         from llm_bench.profile import run_profile
 
@@ -73,6 +96,12 @@ def main(argv: list[str] | None = None) -> int:
             concurrencies=tuple(int(x) for x in args.concurrencies.split(",")),
             samples_per_level=args.samples_per_level,
         )
+        return 0
+
+    if args.command == "resume":
+        from llm_bench.run import resume_incomplete
+
+        resume_incomplete(args.log_dir)
         return 0
 
     if args.command in ("list-models", "list-suites"):

@@ -18,6 +18,8 @@
             pkgs.uv
             pkgs.jq
             pkgs.cacert
+            pkgs.stdenv.cc.cc.lib
+            pkgs.zlib
           ];
           # Docker itself (daemon + CLI) is a host prerequisite for the code/agentic
           # sandbox evals, deliberately not provided here: pkgs.docker-client pulled
@@ -31,6 +33,11 @@
             # IFEval scorer) fails cert verification without this.
             export SSL_CERT_FILE="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
             export NIX_SSL_CERT_FILE="$SSL_CERT_FILE"
+
+            # numpy's (and other compiled deps') manylinux wheels dynamically
+            # link libstdc++.so.6, which a pure Nix devShell doesn't put on
+            # the loader path by default.
+            export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [ pkgs.stdenv.cc.cc.lib pkgs.zlib ]}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
             export UV_PYTHON_DOWNLOADS=never
 

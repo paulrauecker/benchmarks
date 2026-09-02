@@ -31,6 +31,11 @@ class Cell:
     duration_s: float
     confidence: float | None = None  # mean logprob-derived confidence, if available
     ece: float | None = None
+    # cost, duration and sample counts belong to the eval run, not to the scorer.
+    # A task with two scorers yields two cells carrying the same run-level
+    # numbers; only the one flagged here may be summed, or every total is
+    # multiplied by the scorer count.
+    owns_run_totals: bool = True
 
     @property
     def error_rate(self) -> float:
@@ -112,10 +117,46 @@ def _duration_seconds(started: str, completed: str) -> float:
         return 0.0
 
 
-def collect(log_dir: Path) -> list[Cell]:
+def _started_key(log, name: str) -> tuple[str, str]:
+    """Sort key for "which run is newer".
+
+    `stats.started_at` is the truth; the log's name -- which inspect prefixes
+    with the run's timestamp -- breaks ties and stands in when a log lacks the
+    stat. Both are ISO-ish and sort lexicographically, which is all that's
+    needed to order runs inside one directory.
+    """
+    return (log.stats.started_at or "", name)
+
+
+@dataclass
+class RunRef:
+    """A superseded run, kept only so the reader can be told it was dropped."""
+
+    model: str
+    task: str
+    name: str
+    started_at: str
+
+
+@dataclass
+class Collection:
+    cells: list[Cell]
+    superseded: list[RunRef]
+
+
+def collect(log_dir: Path) -> Collection:
+    """Read a log dir, keeping only the newest successful run per model+task.
+
+    Re-running a suite into an existing log dir leaves several successful logs
+    for the same model and task. Averaging or summing across them would
+    double-count cost and plot the same model twice, so the newest wins and the
+    older ones are reported as superseded rather than silently dropped.
+    """
     from inspect_ai.log import list_eval_logs, read_eval_log
 
-    cells: list[Cell] = []
+    newest: dict[tuple[str, str], tuple[tuple[str, str], object, str]] = {}
+    superseded: list[RunRef] = []
+
     for info in list_eval_logs(str(log_dir)):
         log = read_eval_log(info, header_only=True)
         if log.status != "success" or not log.results:
@@ -124,13 +165,25 @@ def collect(log_dir: Path) -> list[Cell]:
             )
             continue
 
-        model = log.eval.model
-        task = log.eval.task
+        key = (log.eval.model, log.eval.task)
+        started = _started_key(log, info.name)
+        previous = newest.get(key)
+        if previous is None or started > previous[0]:
+            if previous is not None:
+                superseded.append(
+                    RunRef(key[0], key[1], previous[2], previous[0][0])
+                )
+            newest[key] = (started, log, info.name)
+        else:
+            superseded.append(RunRef(key[0], key[1], info.name, started[0]))
+
+    cells: list[Cell] = []
+    for (model, task), (_started, log, _name) in newest.items():
         usage = log.stats.model_usage.get(model) if log.stats.model_usage else None
         cost = usage.total_cost if (usage and usage.total_cost) else 0.0
         duration = _duration_seconds(log.stats.started_at, log.stats.completed_at)
 
-        for score_entry in log.results.scores:
+        for index, score_entry in enumerate(log.results.scores):
             value, err = _headline_metric(score_entry, log.results.headline)
             cells.append(
                 Cell(
@@ -142,9 +195,10 @@ def collect(log_dir: Path) -> list[Cell]:
                     n_total=log.results.total_samples,
                     cost=cost,
                     duration_s=duration,
+                    owns_run_totals=index == 0,
                 )
             )
-    return cells
+    return Collection(cells=cells, superseded=superseded)
 
 
 def render_table(cells: list[Cell]) -> Table:
@@ -178,8 +232,9 @@ def render_table(cells: list[Cell]) -> Table:
             if c is None or c.score is None:
                 cells_out.append("-")
                 continue
-            total_cost += c.cost
-            total_err += int(round(c.error_rate * c.n_total))
+            if c.owns_run_totals:
+                total_cost += c.cost
+                total_err += int(round(c.error_rate * c.n_total))
             txt = f"{c.score:.3f}"
             if c.stderr is not None:
                 txt += f"±{c.stderr:.3f}"
@@ -199,12 +254,17 @@ def render_table(cells: list[Cell]) -> Table:
 
 
 def report(log_dir: Path) -> None:
-    cells = collect(log_dir)
-    if not cells:
+    collection = collect(log_dir)
+    if not collection.cells:
         console.print(f"[red]no completed eval logs found under {log_dir}[/red]")
         return
-    table = render_table(cells)
+    table = render_table(collection.cells)
     console.print(table)
+    for ref in collection.superseded:
+        console.print(
+            f"[yellow]superseded[/yellow] {ref.name} -- an older run of "
+            f"{ref.task} on {ref.model}; showing the newest only"
+        )
     console.print(
         "[dim]~ marks scores within the leader's 95% CI (not distinguishable). "
         "'errs' counts unscored samples (timeouts, parse failures, refusals).[/dim]"

@@ -134,6 +134,38 @@ def run_suite(
     return log_dir
 
 
+def resume_incomplete(log_dir: Path) -> None:
+    """Resume every non-successful run under `log_dir`.
+
+    `retry_on_error` already absorbs transient per-sample blips inside a
+    running eval. This covers the harder case: the whole `llm-bench run`
+    process died mid-suite (retries exhausted, process killed, connectivity
+    gone long enough to give up). inspect's log format records per-sample
+    completion, and `eval_retry` resumes a task from its log, re-running
+    only the samples that never finished -- so nothing already-completed
+    is redone or re-billed.
+    """
+    from inspect_ai import eval_retry
+    from inspect_ai.log import list_eval_logs, read_eval_log
+
+    infos = list_eval_logs(str(log_dir))
+    incomplete = []
+    for info in infos:
+        log = read_eval_log(info, header_only=True)
+        if log.status != "success":
+            incomplete.append(info)
+
+    if not incomplete:
+        console.print(f"[green]nothing to resume[/green] -- all runs under {log_dir} succeeded")
+        return
+
+    console.print(f"[bold]resuming[/bold] {len(incomplete)} incomplete run(s):")
+    for info in incomplete:
+        console.print(f"  {info.name}")
+
+    eval_retry(incomplete, log_dir=str(log_dir))
+
+
 def _run_one(
     inspect_eval: Any,
     model: Model,
@@ -173,18 +205,24 @@ def _run_one(
         kwargs["epochs"] = eff_epochs
     if model.cost is not None:
         registry.register_model_cost(model)
-    # Only wire the grader role if its credentials are actually present --
-    # inspect initialises the client eagerly, so passing it unconditionally
-    # breaks every non-judged task (IFEval, GPQA, HumanEval, ...) whenever
-    # the judge's env var happens to be unset.
-    if registry.judge and registry.judge_available():
-        kwargs["model_roles"] = {"grader": registry.judge}
-    elif registry.judge and spec.name in ("physics_qa", "agentic"):
-        console.print(
-            f"[yellow]warning:[/yellow] judge ({registry.judge}) has no "
-            f"credentials in this environment; model-graded scoring in "
-            f"{spec.name!r} will fail if it hits an open-ended item"
-        )
+    # Only wire the grader role for tasks that actually use model-graded
+    # scoring, and only when its credentials are present. Wiring it
+    # unconditionally for every task (a) initialises a client the task
+    # doesn't need and (b) makes `cost_limit` demand pricing data for the
+    # judge even on runs that never call it, since inspect can't tell an
+    # unused model_role apart from a used one.
+    if spec.name in ("physics_qa", "agentic") and registry.judge:
+        if registry.judge_available():
+            kwargs["model_roles"] = {"grader": registry.judge}
+            judge = registry.judge_model()
+            if judge is not None:
+                registry.register_model_cost(judge)
+        else:
+            console.print(
+                f"[yellow]warning:[/yellow] judge ({registry.judge}) has no "
+                f"credentials in this environment; model-graded scoring in "
+                f"{spec.name!r} will fail if it hits an open-ended item"
+            )
 
     try:
         inspect_eval(**kwargs)

@@ -10,6 +10,16 @@ dependencies = [
     "inspect-evals @ git+https://github.com/UKGovernmentBEIS/inspect_evals",
     # IFEval's scorer needs this; inspect_evals doesn't pull it in by default.
     "instruction_following_eval @ git+https://github.com/josejg/instruction_following_eval",
+    # MATH's scorer needs this for symbolic/normalized answer matching;
+    # inspect_evals doesn't declare it as a hard dependency either.
+    "sympy>=1.12",
+    # sympy.parsing.latex.parse_latex (used by the MATH scorer's
+    # expression_exact_match_sympy metric) silently no-ops without this --
+    # every ImportError from the missing parser falls through to a bare
+    # `except Exception: return False`, so the metric reports 0.000 for
+    # every sample rather than erroring. Verified: pinned to what sympy's
+    # own error message asks for (version 4.11).
+    "antlr4-python3-runtime==4.11.*",
     "pyyaml>=6.0",
     "pandas>=2.0",
     "rich>=13.0",
