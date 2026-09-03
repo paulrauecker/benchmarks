@@ -20,12 +20,22 @@
             pkgs.cacert
             pkgs.stdenv.cc.cc.lib
             pkgs.zlib
+
+            # Docker CLI for the code/agentic sandbox evals. clientOnly since a
+            # devShell cannot supply the *daemon* -- on NixOS that's a system
+            # service (virtualisation.docker.enable), so a running daemon stays
+            # a host prerequisite regardless of what's pinned here.
+            #
+            # Pinned to docker_29 specifically: the generic `docker-client`
+            # attr resolves to 28.5.2, which this channel flags insecure and
+            # refuses to build without --impure/NIXPKGS_ALLOW_INSECURE=1.
+            # docker_29 (29.6.0) carries no knownVulnerabilities and builds
+            # clean. Verified it bundles the compose plugin (compose 2.40.3 +
+            # buildx), which matters because inspect_ai shells out to
+            # `docker compose`, NOT standalone `docker-compose` -- a client
+            # without the plugin would silently break every sandboxed eval.
+            (pkgs.docker_29.override { clientOnly = true; })
           ];
-          # Docker itself (daemon + CLI) is a host prerequisite for the code/agentic
-          # sandbox evals, deliberately not provided here: pkgs.docker-client pulled
-          # in docker-28.5.2, which this nixpkgs channel flags insecure and refuses
-          # to build without --impure/NIXPKGS_ALLOW_INSECURE=1. The host's own
-          # `docker` (confirmed present and working) is used instead.
 
           shellHook = ''
             # Nix devShells have no system CA bundle by default, so any dependency
