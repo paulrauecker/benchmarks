@@ -44,84 +44,82 @@ suites:
     description: "core + math only, no code/custom"
     includes: [core, math]
 
-  # Time-boxed to ~2h on the ServerS box (Qwen3.8-Flash-Next, 4 slots).
+  # Sized for DISCRIMINATION, not for a round number of hours: the point is
+  # to separate models and thinking levels, which needs enough n per task to
+  # resolve ~10pp. Budget ~3h at reasoning_effort: medium (~9700s usable
+  # after ~10% dataset-load/scoring overhead).
   #
-  # Sizing is derived from a measured 10-sample-per-task probe on that box:
-  # clean aggregate throughput is ~29 tok/s across 4 slots (~8.3/slot, which
-  # matches llama-server's own `tg` figure), giving ~37s per short-output
-  # sample and ~110s per gpqa_diamond generation (gpqa genuinely hits the
-  # 8192 max_tokens cap, so it costs ~3x a normal sample).
+  # Rates measured on ServerS (see docs/measurements.md): ~29 tok/s aggregate
+  # over 4 slots -> ~37s per short-output sample, ~110s per gpqa_diamond
+  # generation (gpqa hits the 8192 cap, so it costs ~3x a normal sample).
   #
-  # Budget: 7200s minus ~10% for dataset load/scoring/startup = ~6500s.
-  #   gpqa_diamond  15 x 110s = 1650s
-  #   scicode        8 x 185s = 1480s  (8 problems x ~4.48 subproblems)
-  #   math          30 x  37s = 1110s
-  #   ds1000        25 x  35s =  875s
-  #   mmlu_pro      20 x  37s =  740s
-  #   ifeval        15 x  37s =  555s
+  #   math          90 x  37s = 3330s
+  #   gpqa_diamond  25 x 110s = 2750s
+  #   ds1000        40 x  35s = 1400s
+  #   mmlu_pro      30 x  37s = 1110s
+  #   scicode        4 x 185s =  740s  (4 problems x ~4.48 subproblems)
+  #   ifeval        12 x  37s =  444s
   #                            ------
-  #                             6410s (~1h47m, leaving headroom)
+  #                             9774s (~2h43m at medium effort)
   #
-  # WARNING: six tasks inside a fixed 2h budget means every one of them is
-  # small. Per-task this resolves only very large gaps (see the power table
-  # in docs/measurements.md) -- it is a "does anything look broken / roughly
-  # where does this model sit" screen, NOT a tool for ranking close models.
-  # For a real number on any single task, run that task's own suite.
+  # Weighting is deliberate. ~70% of the budget goes to the three tasks where
+  # reasoning effort actually changes the answer (math, gpqa_diamond,
+  # scicode), since those are what separate thinking levels. mmlu_pro/ds1000/
+  # ifeval are there for breadth -- to catch a model that is broken somewhere
+  # unexpected -- not to be finely resolved.
   #
-  # Weighted toward math/physics. epochs are pinned to 1 everywhere: repeating
-  # the same item only reduces generation noise, while more unique items also
-  # reduces item-difficulty variance -- strictly the better buy when the pool
-  # is bigger than what we're sampling (it is, for all four of these).
+  # What this can and cannot resolve (see the power table in
+  # docs/measurements.md):
+  #   math @ n=90 paired      -> ~10-12pp. Good enough to rank thinking levels.
+  #   gpqa_diamond @ n=25     -> ~25pp. On-target but expensive; treat as
+  #                              directional unless the gap is large.
+  #   the rest @ n=12-40      -> coarse. Sanity checks, not rankings.
+  # Comparisons are PAIRED (run.py pins sample_shuffle, and math/mmlu_pro/
+  # ds1000 get shuffle: false), so every model and effort level sees the same
+  # items -- that pairing is what makes these numbers usable at all.
+  #
+  # RUNTIME VARIES SHARPLY BY EFFORT LEVEL. The estimate above is for medium.
+  # reasoning_effort: none runs several times faster; xhigh runs several times
+  # slower (measured on proteus: unset/unconstrained was ~8x `none` on
+  # gpqa_diamond alone). Budget accordingly when sweeping levels.
   #
   # gpqa_diamond needs epochs: 1 SPELLED OUT -- inspect_evals bakes
-  # DEFAULT_EPOCHS = 4 into the task itself, so omitting it silently
-  # quadruples the task to 80 generations and blows the whole budget on one
-  # task. mbpp hides epochs: 5 the same way (hence its exclusion); the rest
-  # of the tasks used here default to 1.
+  # DEFAULT_EPOCHS = 4 into the task, so omitting it silently quadruples it.
+  # mbpp hides epochs: 5 the same way, hence its exclusion.
   #
-  # aime2025 is deliberately excluded: only 30 items exist, and at any n this
-  # budget affords the error bar is ~+/-20pp, i.e. no decision-relevant
-  # information. Run the full `math` suite when you want a real AIME number.
+  # humaneval and mbpp are excluded from measurement entirely: both returned
+  # 1.000, and a benchmark at ceiling cannot resolve a difference at any
+  # sample size. humaneval stays in `smoke`, proving the sandbox works.
   #
-  # CAVEAT: the probe ran at temperature 0 (greedy). The Qwen3.8 models now
-  # use their model-card thinking-mode params (temp 1.0), which may change
+  # aime2025 is excluded: only 30 items exist, so even the full set gives
+  # ~+/-20pp. Run the `math` suite when you want a real AIME number.
+  #
+  # CAVEAT: rates were measured at temperature 0 (greedy). The Qwen3.8 models
+  # now use their model-card thinking-mode params (temp 1.0), which may shift
   # generation lengths and therefore these timings.
-  quick2h:
-    description: "~2h time-boxed screen on a ~29 tok/s self-hosted box"
+  compare3h:
+    description: "~3h representative screen, sized to separate models and thinking levels"
     tasks:
-      # args: {shuffle: false} on math/mmlu_pro/ds1000 disables their own
-      # UNSEEDED dataset shuffle so run.py's seeded sample_shuffle picks the
-      # items -- without it each model would be scored on a different random
-      # subsample. gpqa_diamond and ifeval don't shuffle samples at all.
+      # args: {shuffle: false} disables each task's own UNSEEDED dataset
+      # shuffle so run.py's seeded sample_shuffle picks the items. Without it
+      # every model draws a different random subsample and the comparison is
+      # no longer paired. gpqa_diamond, ifeval and scicode don't shuffle.
       #
-      # ds1000 (numpy/pandas/scipy/matplotlib, execution-scored) is the coding
-      # slot. humaneval and mbpp are deliberately NOT here: both returned
-      # 1.000, and a benchmark at ceiling cannot resolve a difference at any
-      # sample size. mbpp additionally hides epochs: 5 (pass@k reducers), so
-      # it costs 5x what its limit suggests. humaneval stays in `smoke`, where
-      # its job is proving the sandbox works rather than measuring anything.
+      # scicode's limit counts MAIN PROBLEMS; each loops `generate` once per
+      # subproblem (mean 4.48, median 3, max 15), so limit: 4 is ~18
+      # generations and an unlucky draw costs ~5x a median one.
       #
-      # ifeval is trimmed hard: both boxes score 0.84-0.96, so it's near
-      # ceiling and unlikely to resolve anything, but it's cheap and the only
-      # programmatic no-judge signal here.
-      #
-      # NOTE: ds1000 builds its own Docker image on first run -- budget extra
-      # time for that once.
-      # scicode: limit is in MAIN PROBLEMS, and each one loops `generate` once
-      # per subproblem (mean 4.48, median 3, max 15 across the 65-problem set),
-      # so limit: 8 is ~36 generations, not 8. Subproblems are sequential
-      # within a problem and the conversation accumulates, so prompts grow as
-      # it goes. Cost is also variable: drawing a 15-subproblem item costs ~5x
-      # a median one.
-      - {task: gpqa_diamond, limit: 15, epochs: 1}
-      - {task: scicode, limit: 8}
-      - {task: math, limit: 30, args: {shuffle: false}}
-      - {task: ds1000, limit: 25, args: {shuffle: false}}
-      - {task: mmlu_pro, limit: 20, args: {shuffle: false}}
-      - {task: ifeval, limit: 15}
+      # NOTE: ds1000 builds its own Docker image and scicode downloads a ~1GB
+      # test_data.h5 on first run -- warm both once before timing anything.
+      - {task: math, limit: 90, args: {shuffle: false}}
+      - {task: gpqa_diamond, limit: 25, epochs: 1}
+      - {task: ds1000, limit: 40, args: {shuffle: false}}
+      - {task: mmlu_pro, limit: 30, args: {shuffle: false}}
+      - {task: scicode, limit: 4}
+      - {task: ifeval, limit: 12}
 
   # SciCode on its own, for when you want a real number rather than the
-  # token slot quick2h can afford. Full 65-problem set = ~291 generations;
+  # token slot compare3h can afford. Full 65-problem set = ~291 generations;
   # at ~29 tok/s that is roughly 3-4h on the ServerS box.
   # Needs `gdown` (its test data is on Google Drive) and downloads a ~1GB
   # test_data.h5 on first run.
