@@ -146,18 +146,26 @@ sample. The other two math metrics are string-normalisation based and unaffected
 2. **`mbpp` bakes in `epochs: 5`** (with pass@k reducers), so it silently
    costs 5x its stated limit -- same class of trap as `gpqa_diamond`'s
    `epochs = 4`.
-3. **`math` has no built-in cap** — its dataset is the full 5,000-sample MATH
+3. **`scicode`'s `limit` counts MAIN PROBLEMS, not generations.** Each
+   problem loops `generate` once per subproblem — 65 problems / 291
+   subproblems, mean 4.48, median 3, **max 15** — so `limit: 8` is ~36
+   generations. Subproblems are sequential within a problem and the
+   conversation accumulates, so prompts grow as it goes, and cost is highly
+   variable (a 15-subproblem draw costs ~5x a median one). It also needs
+   `gdown` (test data is on Google Drive) and pulls a ~1GB `test_data.h5`
+   on first run.
+4. **`math` has no built-in cap** — its dataset is the full 5,000-sample MATH
    test split, not MATH-500. Uncapped it can run 24h+ on a slow backend.
-4. **`mmlu_pro`, `math` and `ds1000` shuffle their datasets UNSEEDED**
+5. **`mmlu_pro`, `math` and `ds1000` shuffle their datasets UNSEEDED**
    (`hf_dataset(shuffle=True)` with `seed` defaulting to `None`) — verified
    live: two consecutive loads return different items. Without
    `args: {shuffle: false}` plus a pinned `sample_shuffle`, every model is
    scored on a *different* random subsample. `gpqa_diamond` and `ifeval` don't
    shuffle samples at all.
-5. **inspect's default request timeout is 600s.** At ~8 tok/s a full 8192-token
+6. **inspect's default request timeout is 600s.** At ~8 tok/s a full 8192-token
    generation takes ~1024s, so long generations get cancelled and retried from
    scratch, compounding into a retry storm rather than just running long once.
-6. **Continuous batching makes runs non-deterministic even at temperature 0** —
+7. **Continuous batching makes runs non-deterministic even at temperature 0** —
    batch composition changes floating-point reduction order. Expect small
    run-to-run variation on self-hosted models, and treat it as a noise floor
    below which differences cannot be resolved.

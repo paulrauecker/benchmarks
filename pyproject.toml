@@ -20,6 +20,10 @@ dependencies = [
     # every sample rather than erroring. Verified: pinned to what sympy's
     # own error message asks for (version 4.11).
     "antlr4-python3-runtime==4.11.*",
+    # SciCode hosts its test data on Google Drive and fetches it via
+    # inspect_ai's gdrive_download, which raises PrerequisiteError without
+    # this. Not declared by inspect_evals either.
+    "gdown>=5.0",
     "pyyaml>=6.0",
     "pandas>=2.0",
     "rich>=13.0",
