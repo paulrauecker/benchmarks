@@ -41,6 +41,7 @@ class Model:
     top_p: float | None = None
     top_k: int | None = None
     presence_penalty: float | None = None
+    timeout: float | None = None
 
     @property
     def provider(self) -> str:
@@ -102,6 +103,15 @@ class Model:
             cfg["top_k"] = self.top_k
         if self.presence_penalty is not None:
             cfg["presence_penalty"] = self.presence_penalty
+        if self.timeout is not None:
+            # inspect_ai's per-request default is 600s. Confirmed live this
+            # is too short for a slow self-hosted reasoning model: at ~8
+            # tok/s decode (observed on the ServerS box under load) a
+            # max_tokens: 8192 generation can take ~1024s worst case, so the
+            # client cancels mid-generation and retries from scratch --
+            # losing all progress and compounding into a retry storm rather
+            # than just running long once.
+            cfg["timeout"] = self.timeout
         return cfg
 
 
@@ -113,6 +123,12 @@ class TaskSpec:
     path: str
     limit: int | None = None
     epochs: int | None = None
+    # Task-constructor args (inspect's `task_args`). Used to turn OFF a task's
+    # own unseeded dataset shuffle so that the seeded one in run.py governs
+    # item selection -- see DEFAULT_SAMPLE_SHUFFLE_SEED there. Only some tasks
+    # accept `shuffle`; passing it to one that doesn't is an error, hence
+    # per-task rather than global.
+    args: dict[str, Any] = field(default_factory=dict)
 
     def display(self) -> str:
         bits = [self.name]
@@ -164,6 +180,7 @@ class Registry:
                 presence_penalty=cfg.get(
                     "presence_penalty", defaults.get("presence_penalty")
                 ),
+                timeout=cfg.get("timeout", defaults.get("timeout")),
             )
 
         return cls(
@@ -217,6 +234,7 @@ class Registry:
                     path=self.task_paths[name],
                     limit=entry.get("limit", suite_limit),
                     epochs=entry.get("epochs"),
+                    args=entry.get("args") or {},
                 )
             )
 

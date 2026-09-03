@@ -17,7 +17,8 @@ suites:
     tasks:
       - ifeval                        # 541, programmatic scoring, no judge
       - gpqa_diamond                  # 198, graduate physics/chem/bio
-      - {task: mmlu_pro, limit: 1000} # subsampled from 12k
+      # shuffle: false -> seeded selection via run.py; see the `math` note below.
+      - {task: mmlu_pro, limit: 1000, args: {shuffle: false}}  # subsampled from 12k
 
   math:
     description: "~$1/model non-reasoning, $20+ on reasoning models"
@@ -25,7 +26,9 @@ suites:
       # inspect_evals' math task has no built-in cap -- its dataset is the
       # full 5,000-sample MATH test split, not MATH-500. Cap explicitly or
       # this task alone can run 24+ hours on a slow backend.
-      - {task: math, limit: 500}
+      # shuffle: false -> use run.py's seeded sample_shuffle instead of this
+      # task's unseeded one, so every model is scored on the same 500 items.
+      - {task: math, limit: 500, args: {shuffle: false}}
       # 30 items/year: one problem is 3.3pp, so epochs are mandatory
       - {task: aime2025, epochs: 4}
 
@@ -40,6 +43,51 @@ suites:
   core_math:
     description: "core + math only, no code/custom"
     includes: [core, math]
+
+  # Time-boxed to ~2h on the ServerS box (Qwen3.8-Flash-Next, 4 slots).
+  #
+  # Sizing is derived from a measured 10-sample-per-task probe on that box:
+  # clean aggregate throughput is ~29 tok/s across 4 slots (~8.3/slot, which
+  # matches llama-server's own `tg` figure), giving ~37s per short-output
+  # sample and ~110s per gpqa_diamond generation (gpqa genuinely hits the
+  # 8192 max_tokens cap, so it costs ~3x a normal sample).
+  #
+  # Budget: 7200s minus ~10% for dataset load/scoring/startup = ~6500s.
+  #   gpqa_diamond  20 x 110s = 2200s
+  #   math          50 x  37s = 1850s
+  #   mmlu_pro      30 x  37s = 1110s
+  #   ifeval        30 x  37s = 1110s
+  #                            ------
+  #                             6270s (~1h45m, leaving headroom)
+  #
+  # Weighted toward math/physics. epochs are pinned to 1 everywhere: repeating
+  # the same item only reduces generation noise, while more unique items also
+  # reduces item-difficulty variance -- strictly the better buy when the pool
+  # is bigger than what we're sampling (it is, for all four of these).
+  #
+  # gpqa_diamond needs epochs: 1 SPELLED OUT -- inspect_evals bakes
+  # DEFAULT_EPOCHS = 4 into the task itself, so omitting it silently
+  # quadruples the task to 80 generations (~2h27m) and blows the whole
+  # budget on one task. The other three default to 1.
+  #
+  # aime2025 is deliberately excluded: only 30 items exist, and at any n this
+  # budget affords the error bar is ~+/-20pp, i.e. no decision-relevant
+  # information. Run the full `math` suite when you want a real AIME number.
+  #
+  # CAVEAT: the probe ran at temperature 0 (greedy). The Qwen3.8 models now
+  # use their model-card thinking-mode params (temp 1.0), which may change
+  # generation lengths and therefore these timings.
+  quick2h:
+    description: "~2h time-boxed screen on a ~29 tok/s self-hosted box"
+    tasks:
+      # args: {shuffle: false} on math/mmlu_pro disables their own UNSEEDED
+      # dataset shuffle so run.py's seeded sample_shuffle picks the items --
+      # without it each model would be scored on a different random subsample.
+      # gpqa_diamond and ifeval don't shuffle samples at all, so they need no arg.
+      - {task: gpqa_diamond, limit: 20, epochs: 1}
+      - {task: math, limit: 50, args: {shuffle: false}}
+      - {task: mmlu_pro, limit: 30, args: {shuffle: false}}
+      - {task: ifeval, limit: 30}
 
   all:
     description: "Everything"

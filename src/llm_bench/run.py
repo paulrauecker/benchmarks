@@ -23,6 +23,17 @@ console = Console()
 DEFAULT_COST_LIMIT = 1.00
 DEFAULT_TOKEN_LIMIT = 100_000
 
+# Pinned so that a subsampled run draws the SAME items every time, for every
+# model. Verified against inspect_evals: mmlu_pro and math call
+# hf_dataset(shuffle=True) without a seed (hf_dataset defaults seed=None), so
+# two consecutive loads return completely different items -- confirmed live.
+# Left alone, every model in a comparison gets a different subsample, which
+# destroys pairing and folds item-difficulty variance into every score
+# difference. Those tasks must ALSO be given args: {shuffle: false} in
+# suites.yaml, otherwise their own unseeded shuffle runs first and this
+# seeded one just reorders an already-random draw.
+DEFAULT_SAMPLE_SHUFFLE_SEED = 42
+
 # Tasks that pull a gated HuggingFace dataset. Confirmed via HfApi.dataset_info:
 # gpqa_diamond -> Idavidrein/gpqa (gated: auto); the rest of the core/math/code
 # suite (ifeval, mmlu_pro, math, aime2025, humaneval, mbpp) is not gated. An
@@ -195,10 +206,15 @@ def _run_one(
         # Spend guards -- see module docstring.
         "token_limit": DEFAULT_TOKEN_LIMIT,
         "cost_limit": DEFAULT_COST_LIMIT,
+        # Seeded item selection, so a subsampled run is reproducible and every
+        # model sees the same questions -- see the constant's comment.
+        "sample_shuffle": DEFAULT_SAMPLE_SHUFFLE_SEED,
         # Generation settings arrive as flat kwargs (Unpack[GenerateConfigArgs]),
         # not as a config object.
         **model.generate_config(),
     }
+    if spec.args:
+        kwargs["task_args"] = spec.args
     if eff_limit is not None:
         kwargs["limit"] = eff_limit
     if eff_epochs is not None:
