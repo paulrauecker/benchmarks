@@ -37,6 +37,10 @@ class Model:
     logprobs: bool
     cost: dict[str, float] | None = None
     server: dict[str, Any] | None = None
+    reasoning_effort: str | None = None
+    top_p: float | None = None
+    top_k: int | None = None
+    presence_penalty: float | None = None
 
     @property
     def provider(self) -> str:
@@ -77,6 +81,27 @@ class Model:
             # always scored generatively. These feed confidence/ECE columns.
             cfg["logprobs"] = True
             cfg["top_logprobs"] = 5
+        if self.reasoning_effort:
+            # Left unset, a reasoning model doesn't fall back to some sane
+            # default -- it reasons unconstrained. Confirmed live: an
+            # llama.cpp Qwen3 box with no reasoning_effort set spent most of
+            # its max_tokens budget on reasoning_content on nearly every
+            # sample, ~8x slower than a comparable capped run. Also confirmed
+            # OpenRouter accepts this field even for models that don't list
+            # it in supported_parameters (silently no-ops rather than 400s).
+            cfg["reasoning_effort"] = self.reasoning_effort
+        # Defaults to greedy (temperature 0) for cross-model reproducibility --
+        # the usual eval-harness convention. Some model cards (e.g. Qwen3.8
+        # Flash-Next, Qwen3.8-27B) explicitly recommend against greedy
+        # decoding for their reasoning-tuned variants and publish their own
+        # sampling params instead; those models override temperature/top_p/
+        # top_k/presence_penalty here rather than through this being unset.
+        if self.top_p is not None:
+            cfg["top_p"] = self.top_p
+        if self.top_k is not None:
+            cfg["top_k"] = self.top_k
+        if self.presence_penalty is not None:
+            cfg["presence_penalty"] = self.presence_penalty
         return cfg
 
 
@@ -131,6 +156,14 @@ class Registry:
                 logprobs=cfg.get("logprobs", defaults.get("logprobs", False)),
                 cost=cfg.get("cost"),
                 server=cfg.get("server"),
+                reasoning_effort=cfg.get(
+                    "reasoning_effort", defaults.get("reasoning_effort")
+                ),
+                top_p=cfg.get("top_p", defaults.get("top_p")),
+                top_k=cfg.get("top_k", defaults.get("top_k")),
+                presence_penalty=cfg.get(
+                    "presence_penalty", defaults.get("presence_penalty")
+                ),
             )
 
         return cls(

@@ -19,29 +19,157 @@ models:
     cost: {input: 0.0, output: 0.0}   # self-hosted -> $0, keeps cost math honest
     max_connections: 16
     logprobs: true                    # -> confidence/ECE columns in the report
+    reasoning_effort: medium           # Qwen3 reasons unconstrained if unset
 
   qwen3-32b-llamacpp:
     spec: openai-api/llamacpp/Qwen3-32B-Q5_K_M
     cost: {input: 0.0, output: 0.0}
     max_connections: 4                # MUST be <= llama-server --parallel
     logprobs: true
+    reasoning_effort: medium           # Qwen3 reasons unconstrained if unset
     server:                           # documentation, not applied by the harness;
       parallel: 4                     # recorded so a score is explainable later
       ctx_size: 32768                 # = 8192 usable per slot x 4 slots
 
-  # Live test box: servers.cougar-diatonic.ts.net:8080, /props reports
-  # total_slots=4, n_ctx=16384 -> 4096 usable tokens/slot.
-  qwen3.8-flash-cougar:
+  # Live test box: servers.cougar-diatonic.ts.net:8080 (tailnet name; box itself
+  # is "ServerS"). Launch command uses --kv-unified, so context is a shared
+  # dynamic pool sized by `-c`, NOT statically divided ctx_size/parallel like
+  # a non-unified server -- the old "4096/slot" math this file used to record
+  # doesn't apply here. Actual flags (2026-09-03):
+  #   -c 786432 -np 4 --kv-unified -ctk q8_0 -ctv q8_0
+  #   --rope-scaling yarn --rope-freq-scale 3.0 --yarn-orig-ctx 262144
+  # i.e. native 262144 ctx YaRN-extrapolated to a 786432 pool shared by 4
+  # slots on demand. /props reports n_ctx=262144 (the YaRN orig/trained
+  # value, not the extrapolated pool size) -- don't read that field as a
+  # per-slot budget on this build.
+  # Four variants of the same endpoint (none/low/medium/max), one per
+  # reasoning_effort level this build actually documents supporting --
+  # same pattern as the proteus variants below. Skips "high": accepted
+  # without erroring but not in the model's documented supported list, so
+  # its real behavior is unverified. max_tokens: 8192 is a circuit breaker
+  # against quant looping bugs, not a context constraint (see --kv-unified
+  # note above); it applies at every level so the levels stay comparable.
+  # Qwen3.8-Flash-Next's model card explicitly recommends against greedy
+  # decoding and publishes its own sampling params per mode (thinking vs
+  # instruct/non-thinking) -- overriding the registry's temp=0 default here
+  # rather than forcing every model to the same eval-harness convention.
+  # min_p and repetition_penalty aren't in inspect_ai's GenerateConfig, but
+  # the card's recommended values for both (0.0 / 1.0) are no-ops anyway.
+  qwen3.8-flash-servers-none: &servers_base
     spec: openai-api/llamacpp/Qwen3.8-Flash-Next
     cost: {input: 0.0, output: 0.0}
-    max_tokens: 1024                  # well under the 4096/slot budget
+    max_tokens: 8192                  # ample headroom either way; was 1024 --
+                                       # almost certainly truncating reasoning
+                                       # on every sample and tanking
+                                       # gpqa_diamond specifically; see below.
     max_connections: 4                # == total_slots
     logprobs: true
     quant: UD-Q4_K_XL                 # from /v1/models model id; /props.meta.ftype
                                        # only reports the coarser "Q4_K - Medium"
+    # Confirmed live on this llama-server build: unset, reasoning is
+    # unconstrained -- on the proteus box this made a single task take
+    # ~8x longer than expected (thinking through most of max_tokens on
+    # nearly every sample). Any run already in flight when this was added
+    # started with the old (unconstrained) behavior.
+    reasoning_effort: none
+    # none == non-thinking -- model card's "Instruct (or non-thinking) mode"
+    # sampling params.
+    temperature: 0.7
+    top_p: 0.80
+    top_k: 20
+    presence_penalty: 1.5
+    server:                           # documentation only, not applied by the
+                                       # harness -- see launch command above
+      parallel: 4
+      ctx_size: 786432                # total shared pool (--kv-unified), not
+                                       # per-slot
+
+  qwen3.8-flash-servers-low:
+    <<: *servers_base
+    reasoning_effort: low
+    # low/medium/xhigh all actually think -- model card's "Thinking Mode"
+    # sampling params.
+    temperature: 1.0
+    top_p: 0.95
+    presence_penalty: 0.0
+
+  qwen3.8-flash-servers-medium:
+    <<: *servers_base
+    reasoning_effort: medium
+    temperature: 1.0
+    top_p: 0.95
+    presence_penalty: 0.0
+
+  qwen3.8-flash-servers-max:
+    <<: *servers_base
+    # Confirmed live: reasoning_effort=max is a hard 500 on this build --
+    # "Unexpected reasoning effort max. Supported types are xhigh (default),
+    # medium, and low." xhigh is the actual top tier here. "high" was also
+    # accepted without erroring, but it's not in that supported list --
+    # unclear what it actually does under the hood, so dropped rather than
+    # trust an unvalidated fallback.
+    reasoning_effort: xhigh
+    temperature: 1.0
+    top_p: 0.95
+    presence_penalty: 0.0
+
+  # proteus:8080, /props reports total_slots=4, n_ctx=147456 -> 36864 usable
+  # tokens/slot. Larger model than the ServerS box (27B vs Qwen3.8-Flash-Next).
+  #
+  # Five variants of the same endpoint, one per reasoning_effort level, to
+  # compare speed/accuracy across the range on real llama.cpp -- confirmed
+  # live that this build honors the field (varying reasoning_content length
+  # per level) and that leaving it unset means unconstrained ("none" is
+  # therefore not just a placeholder -- it's the one level guaranteed to
+  # differ sharply from doing nothing).
+  # Qwen3.8-27B's model card publishes the same per-mode sampling params as
+  # Flash-Next (thinking vs instruct/non-thinking) -- same override rationale
+  # as the servers-* family above.
+  qwen3.8-27b-proteus-none: &proteus_base
+    spec: openai-api/proteus/Qwen3.8-27B-UD-Q4_K_XL
+    cost: {input: 0.0, output: 0.0}
+    max_tokens: 4096                  # reasoning model (emits reasoning_content
+                                       # before its answer) -- well under the
+                                       # 36864/slot budget either way
+    max_connections: 4                # == total_slots
+    logprobs: true
+    quant: UD-Q4_K_XL                 # from /v1/models model id
+    reasoning_effort: none
+    temperature: 0.7                  # non-thinking -- card's Instruct mode
+    top_p: 0.80
+    top_k: 20
+    presence_penalty: 1.5
     server:
       parallel: 4
-      ctx_size: 16384
+      ctx_size: 147456
+
+  qwen3.8-27b-proteus-low:
+    <<: *proteus_base
+    reasoning_effort: low
+    temperature: 1.0                  # thinking -- card's Thinking Mode
+    top_p: 0.95
+    presence_penalty: 0.0
+
+  qwen3.8-27b-proteus-medium:
+    <<: *proteus_base
+    reasoning_effort: medium
+    temperature: 1.0
+    top_p: 0.95
+    presence_penalty: 0.0
+
+  qwen3.8-27b-proteus-high:
+    <<: *proteus_base
+    reasoning_effort: high
+    temperature: 1.0
+    top_p: 0.95
+    presence_penalty: 0.0
+
+  qwen3.8-27b-proteus-max:
+    <<: *proteus_base
+    reasoning_effort: max
+    temperature: 1.0
+    top_p: 0.95
+    presence_penalty: 0.0
 
   qwen3-max:
     spec: openrouter/qwen/qwen3-max
@@ -54,6 +182,9 @@ models:
     cost: {input: 0.25, output: 2.00}
     max_tokens: 16384                 # reasoning models need headroom
     max_connections: 8
+    # OpenRouter's own default_effort for this model is already "medium",
+    # but pin it explicitly so results don't silently shift if that changes.
+    reasoning_effort: medium
 
   nemotron-3-super-free:
     spec: openrouter/nvidia/nemotron-3-super-120b-a12b:free
@@ -61,6 +192,7 @@ models:
     max_tokens: 16384                  # reasoning model (medium effort by default)
     max_connections: 2                 # free-tier endpoints rate-limit hard
     logprobs: false                    # :free variant's supported_parameters omits logprobs
+    reasoning_effort: medium            # API lists supported_efforts: [medium, low]
 
   minimax-m3-free:
     spec: openrouter/minimax/minimax-m3:free
@@ -68,3 +200,8 @@ models:
     max_tokens: 16384                 # reasoning model, needs headroom
     max_connections: 2                # free-tier endpoints rate-limit hard
     logprobs: false
+    # Doesn't declare reasoning_effort in supported_parameters (only the
+    # generic "reasoning" object), but confirmed via direct curl: OpenRouter
+    # accepts it and it visibly reduced reasoning_tokens vs an unconstrained
+    # call, so it's doing something real here even if undocumented.
+    reasoning_effort: medium
