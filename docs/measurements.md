@@ -165,7 +165,19 @@ sample. The other two math metrics are string-normalisation based and unaffected
 6. **inspect's default request timeout is 600s.** At ~8 tok/s a full 8192-token
    generation takes ~1024s, so long generations get cancelled and retried from
    scratch, compounding into a retry storm rather than just running long once.
-7. **Continuous batching makes runs non-deterministic even at temperature 0** —
+7. **`gpqa_diamond` shuffles its ANSWER CHOICES unseeded.** Item selection is
+   deterministic (no sample shuffle), but `get_gpqa_diamond_dataset` hardcodes
+   `shuffle_choices=True` and the `gpqa_diamond` task does not expose the
+   parameter, so it cannot be seeded or disabled via `task_args`. Verified
+   live: the same three questions came back with targets `[C, A, D]` on one
+   load and `[A, B, A]` on the next. Consequence: every model still sees the
+   same *questions* (so pairing on items holds), but with the options in a
+   different order, so multiple-choice position bias contributes run-to-run
+   noise. It adds variance rather than systematic bias, and disabling it would
+   be worse -- the raw GPQA CSV has the correct answer in a fixed position,
+   which is exactly what the shuffle exists to mitigate. `epochs > 1` averages
+   over orderings if the noise ever matters enough to pay 4x for.
+8. **Continuous batching makes runs non-deterministic even at temperature 0** —
    batch composition changes floating-point reduction order. Expect small
    run-to-run variation on self-hosted models, and treat it as a noise floor
    below which differences cannot be resolved.
