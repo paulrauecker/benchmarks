@@ -12,6 +12,32 @@ suites:
     limit: 20
     tasks: [ifeval, gpqa_diamond, humaneval]
 
+  # Sandbox validation for every task that needs Docker. Not measurement --
+  # limits are deliberately tiny. Two jobs:
+  #   1. prove the Docker sandbox, images and scorers actually work before a
+  #      long run discovers otherwise hours in;
+  #   2. warm the expensive one-off setup, since ds1000 and bigcodebench build
+  #      or pull their own images and scicode downloads a ~1GB test_data.h5.
+  # Run this once after any Docker/flake change, and before timing anything.
+  #
+  # mbpp needs BOTH overrides pinned: it sets epochs: 5 inside its Task (with
+  # pass@k reducers) so a limit of 2 is really 10 generations, and its task
+  # signature defaults temperature=0.5, which is a sampling override living
+  # outside the registry -- exactly the kind of per-task drift models.yaml
+  # exists to prevent. Harmless here because this suite never measures
+  # anything, but don't copy mbpp into a scoring suite without dealing with it.
+  #
+  # scicode's limit counts main problems, each looping generate once per
+  # subproblem (mean 4.48, max 15), so even limit: 1 is a handful of calls.
+  smoke_code:
+    description: "Docker sandbox validation + cache warm-up, all code tasks"
+    tasks:
+      - {task: humaneval, limit: 2}
+      - {task: mbpp, limit: 2, epochs: 1}
+      - {task: ds1000, limit: 2, args: {shuffle: false}}
+      - {task: bigcodebench, limit: 2}
+      - {task: scicode, limit: 1}
+
   core:
     description: "Cheap high-signal screen, ~$1/model, ~15 min"
     tasks:
