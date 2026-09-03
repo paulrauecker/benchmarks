@@ -54,11 +54,12 @@ suites:
   #
   # Budget: 7200s minus ~10% for dataset load/scoring/startup = ~6500s.
   #   gpqa_diamond  20 x 110s = 2200s
-  #   math          50 x  37s = 1850s
-  #   mmlu_pro      30 x  37s = 1110s
-  #   ifeval        30 x  37s = 1110s
+  #   math          40 x  37s = 1480s
+  #   ds1000        30 x  35s = 1050s
+  #   mmlu_pro      25 x  37s =  925s
+  #   ifeval        20 x  37s =  740s
   #                            ------
-  #                             6270s (~1h45m, leaving headroom)
+  #                             6395s (~1h47m, leaving headroom)
   #
   # Weighted toward math/physics. epochs are pinned to 1 everywhere: repeating
   # the same item only reduces generation noise, while more unique items also
@@ -80,14 +81,29 @@ suites:
   quick2h:
     description: "~2h time-boxed screen on a ~29 tok/s self-hosted box"
     tasks:
-      # args: {shuffle: false} on math/mmlu_pro disables their own UNSEEDED
-      # dataset shuffle so run.py's seeded sample_shuffle picks the items --
-      # without it each model would be scored on a different random subsample.
-      # gpqa_diamond and ifeval don't shuffle samples at all, so they need no arg.
+      # args: {shuffle: false} on math/mmlu_pro/ds1000 disables their own
+      # UNSEEDED dataset shuffle so run.py's seeded sample_shuffle picks the
+      # items -- without it each model would be scored on a different random
+      # subsample. gpqa_diamond and ifeval don't shuffle samples at all.
+      #
+      # ds1000 (numpy/pandas/scipy/matplotlib, execution-scored) is the coding
+      # slot. humaneval and mbpp are deliberately NOT here: both returned
+      # 1.000, and a benchmark at ceiling cannot resolve a difference at any
+      # sample size. mbpp additionally hides epochs: 5 (pass@k reducers), so
+      # it costs 5x what its limit suggests. humaneval stays in `smoke`, where
+      # its job is proving the sandbox works rather than measuring anything.
+      #
+      # ifeval is trimmed to 20: both boxes score 0.84-0.96, so it's near
+      # ceiling and unlikely to resolve anything, but it's cheap and the only
+      # programmatic no-judge signal here.
+      #
+      # NOTE: ds1000 builds its own Docker image on first run -- budget extra
+      # time for that once.
       - {task: gpqa_diamond, limit: 20, epochs: 1}
-      - {task: math, limit: 50, args: {shuffle: false}}
-      - {task: mmlu_pro, limit: 30, args: {shuffle: false}}
-      - {task: ifeval, limit: 30}
+      - {task: math, limit: 40, args: {shuffle: false}}
+      - {task: ds1000, limit: 30, args: {shuffle: false}}
+      - {task: mmlu_pro, limit: 25, args: {shuffle: false}}
+      - {task: ifeval, limit: 20}
 
   all:
     description: "Everything"
@@ -107,6 +123,9 @@ registry:
   aime2025:     inspect_evals/aime2025
   humaneval:    inspect_evals/humaneval
   mbpp:         inspect_evals/mbpp
+  ds1000:       inspect_evals/ds1000
+  scicode:      inspect_evals/scicode
+  bigcodebench: inspect_evals/bigcodebench
   extraction:   llm_bench/extraction
   physics_qa:   llm_bench/physics_qa
   code_tasks:   llm_bench/code_tasks

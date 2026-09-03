@@ -143,23 +143,35 @@ sample. The other two math metrics are string-normalisation based and unaffected
 1. **`gpqa_diamond` defaults to `epochs = 4`** inside `inspect_evals`
    (`DEFAULT_EPOCHS = 4`). Omitting `epochs` silently quadruples the task.
    The other tasks here default to 1.
-2. **`math` has no built-in cap** — its dataset is the full 5,000-sample MATH
+2. **`mbpp` bakes in `epochs: 5`** (with pass@k reducers), so it silently
+   costs 5x its stated limit -- same class of trap as `gpqa_diamond`'s
+   `epochs = 4`.
+3. **`math` has no built-in cap** — its dataset is the full 5,000-sample MATH
    test split, not MATH-500. Uncapped it can run 24h+ on a slow backend.
-3. **`mmlu_pro` and `math` shuffle their datasets UNSEEDED**
+4. **`mmlu_pro`, `math` and `ds1000` shuffle their datasets UNSEEDED**
    (`hf_dataset(shuffle=True)` with `seed` defaulting to `None`) — verified
    live: two consecutive loads return different items. Without
    `args: {shuffle: false}` plus a pinned `sample_shuffle`, every model is
    scored on a *different* random subsample. `gpqa_diamond` and `ifeval` don't
    shuffle samples at all.
-4. **inspect's default request timeout is 600s.** At ~8 tok/s a full 8192-token
+5. **inspect's default request timeout is 600s.** At ~8 tok/s a full 8192-token
    generation takes ~1024s, so long generations get cancelled and retried from
    scratch, compounding into a retry storm rather than just running long once.
-5. **Continuous batching makes runs non-deterministic even at temperature 0** —
+6. **Continuous batching makes runs non-deterministic even at temperature 0** —
    batch composition changes floating-point reduction order. Expect small
    run-to-run variation on self-hosted models, and treat it as a noise floor
    below which differences cannot be resolved.
 
 ---
+
+## Saturated benchmarks (do not use for measurement)
+
+`humaneval` returned **1.000** on the 27B at n=20 and again on Flash at n=2;
+`mbpp` returned **1.000** at n=2x5. A benchmark pinned at ceiling cannot
+resolve a difference at any sample size. Both are kept only in `smoke`, where
+the job is proving the Docker sandbox works. `ifeval` at 0.84-0.96 is close
+behind. Discriminative signal lives in `gpqa_diamond`, `math`, `mmlu_pro`, and
+(newly added) `ds1000` / `scicode`.
 
 ## Statistical power (what these sample sizes can actually resolve)
 
