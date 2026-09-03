@@ -53,27 +53,40 @@ suites:
   # over 4 slots -> ~37s per short-output sample, ~110s per gpqa_diamond
   # generation (gpqa hits the 8192 cap, so it costs ~3x a normal sample).
   #
-  #   math          90 x  37s = 3330s
+  #   math          80 x  37s = 2960s
+  #   scicode       15 x 185s = 2775s  (15 problems x ~4.48 subproblems)
   #   gpqa_diamond  25 x 110s = 2750s
-  #   ds1000        40 x  35s = 1400s
-  #   mmlu_pro      30 x  37s = 1110s
-  #   scicode        4 x 185s =  740s  (4 problems x ~4.48 subproblems)
-  #   ifeval        12 x  37s =  444s
+  #   ds1000        35 x  35s = 1225s
+  #   mmlu_pro      20 x  37s =  740s
+  #   ifeval        10 x  37s =  370s
   #                            ------
-  #                             9774s (~2h43m at medium effort)
+  #                            10820s (~3h00m at medium effort)
   #
-  # Weighting is deliberate. ~70% of the budget goes to the three tasks where
-  # reasoning effort actually changes the answer (math, gpqa_diamond,
-  # scicode), since those are what separate thinking levels. mmlu_pro/ds1000/
-  # ifeval are there for breadth -- to catch a model that is broken somewhere
-  # unexpected -- not to be finely resolved.
+  # scicode's 185s/problem is DERIVED (4.48 subproblems x ~41s), not measured
+  # -- it is the one task here with no live timing behind it, and the
+  # accumulating conversation means later subproblems carry longer prompts,
+  # so it may well run slower than this. Measure it on the first real run.
+  #
+  # Weighting is deliberate. ~78% of the budget goes to the three tasks where
+  # reasoning effort actually changes the answer (math, scicode,
+  # gpqa_diamond), since those are what separate thinking levels. scicode is
+  # weighted up because it is the closest thing here to the actual target
+  # domain (scientific computing) -- and because its headline metric is
+  # per-MAIN-PROBLEM, so a small limit makes that metric meaningless no matter
+  # how many subproblem generations it racks up. mmlu_pro/ds1000/ifeval are
+  # there for breadth -- to catch a model broken somewhere unexpected -- not
+  # to be finely resolved.
   #
   # What this can and cannot resolve (see the power table in
   # docs/measurements.md):
-  #   math @ n=90 paired      -> ~10-12pp. Good enough to rank thinking levels.
+  #   math @ n=80 paired      -> ~11-13pp. Good enough to rank thinking levels.
+  #   scicode subproblems     -> ~67 generations from 15 problems: ~13pp.
+  #                              Its main-problem metric is only n=15 (~31pp),
+  #                              so read the SUBPROBLEM metric for ranking and
+  #                              treat the headline percentage as directional.
   #   gpqa_diamond @ n=25     -> ~25pp. On-target but expensive; treat as
   #                              directional unless the gap is large.
-  #   the rest @ n=12-40      -> coarse. Sanity checks, not rankings.
+  #   the rest @ n=10-35      -> coarse. Sanity checks, not rankings.
   # Comparisons are PAIRED (run.py pins sample_shuffle, and math/mmlu_pro/
   # ds1000 get shuffle: false), so every model and effort level sees the same
   # items -- that pairing is what makes these numbers usable at all.
@@ -106,17 +119,17 @@ suites:
       # no longer paired. gpqa_diamond, ifeval and scicode don't shuffle.
       #
       # scicode's limit counts MAIN PROBLEMS; each loops `generate` once per
-      # subproblem (mean 4.48, median 3, max 15), so limit: 4 is ~18
+      # subproblem (mean 4.48, median 3, max 15), so limit: 15 is ~67
       # generations and an unlucky draw costs ~5x a median one.
       #
       # NOTE: ds1000 builds its own Docker image and scicode downloads a ~1GB
       # test_data.h5 on first run -- warm both once before timing anything.
-      - {task: math, limit: 90, args: {shuffle: false}}
+      - {task: math, limit: 80, args: {shuffle: false}}
+      - {task: scicode, limit: 15}
       - {task: gpqa_diamond, limit: 25, epochs: 1}
-      - {task: ds1000, limit: 40, args: {shuffle: false}}
-      - {task: mmlu_pro, limit: 30, args: {shuffle: false}}
-      - {task: scicode, limit: 4}
-      - {task: ifeval, limit: 12}
+      - {task: ds1000, limit: 35, args: {shuffle: false}}
+      - {task: mmlu_pro, limit: 20, args: {shuffle: false}}
+      - {task: ifeval, limit: 10}
 
   # SciCode on its own, for when you want a real number rather than the
   # token slot compare3h can afford. Full 65-problem set = ~291 generations;
